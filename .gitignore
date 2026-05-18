@@ -1,0 +1,39 @@
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# data + outputs (too large for git)
+data/
+Data/
+Output/
+output/
+results/
+ABM_data/
+mobility_data/
+arrival_times/
+models/
+diagnostics/
+
+# generated figures
+*.png
+*.pdf
+!docs/**/*.png   # but keep docs figures if any
+
+# scratch
+scratch/
+*.tmp
+*.log
