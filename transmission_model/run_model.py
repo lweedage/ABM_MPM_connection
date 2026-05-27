@@ -3,12 +3,12 @@ from transmission_model.model import ModelT
 
 
 def main():
-    for run in range(5):
-        for seed in range(10):
+    for run in range(10):
+        for seed in range(1):
             params = {
-                'savename': 'Medium',
+                'savename': 'Medium100',
                 'Ndays': 100,
-                'initialization': 4,
+                'initialization': 5,  # 4: beta = 0.5, 5: beta = 0.25 6: beta = 0.5, foi is exp.
                 'seed': seed,
             }
             model = ModelT(params)

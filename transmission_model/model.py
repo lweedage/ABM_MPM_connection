@@ -61,7 +61,7 @@ class ModelT:
 
         # resolution -> divisor on population
         self.Div = {
-            'High': 100, 'Med': 500, 'Low': 1000, 'Verylow': 5000
+            'High': 100, 'Medium': 500, 'Low': 1000, 'Verylow': 5000, 'Medium100': 500
         }.get(self.SaveName, 100)
 
         # initialization codes:
@@ -159,7 +159,10 @@ class ModelT:
         self.IR_k = 1.0  # I->R Weibull shape
 
         # beta values for different scenarios / phases
-        self.Beta_f1 = 0.5
+        if self.Initialization == 5:
+            self.Beta_f1 = 0.25
+        else:
+            self.Beta_f1 = 0.5
         self.Beta_f2 = 0.11
         self.Beta_f3 = 0.09
         self.Beta_f4 = 0.11
@@ -261,5 +264,4 @@ class ModelT:
         os.makedirs(out_dir, exist_ok=True)
 
         scipy.sparse.save_npz(out_dir + '/Status_' + str(run) + '.npz', Status_sparse)
-        np.save(out_dir + '/Lvec_' + str(run) + '.npy', self.Lvecs)
-        print(f'Saved Status and Lvecs for run {run} in {out_dir}')
+        print(f'Saved Status for run {run} in {out_dir}')

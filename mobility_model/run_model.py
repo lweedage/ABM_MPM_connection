@@ -4,8 +4,8 @@ from mobility_model.model import ModelM
 
 def main():
     params = {
-        'savename': 'Medium',
-        'division': 500,  # 5000 / 1000 / 500 / 100
+        'savename': 'High30',
+        'division': 100,  # 5000 / 1000 / 500 / 100
         'use_same_mobility': True,
     }
 

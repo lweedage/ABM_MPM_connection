@@ -11,61 +11,85 @@ import numpy as np
 import pandas as pd
 import seaborn
 
-from src.utils.util import *  # noqa: F401, F403  (uses pylab params etc.)
+from estimation.pathways import INITIALIZATION
+from utils.util import *
 
 # ------------------------------------------------------------
 # settings
 # ------------------------------------------------------------
-TRUE_BETA = 0.5
 
-# colors match plot_trajectories.py:
-#   rocket[1] -- ABM family (light, warm)
-#   rocket[5] -- Classical MPM (dark)
 _rocket = seaborn.color_palette('rocket', 8)
-COLOR_ABM  = _rocket[1]
-COLOR_MPM  = _rocket[5]
+COLOR_ABM = _rocket[1]
+COLOR_MPM = _rocket[5]
 COLOR_MPM2 = _rocket[4]
 
 markers = ['o', 's', 'p', 'd', '*']
 
-# pick exactly one
-MPM  = True
+# pick exactly one or none
+MPM = False
 MPM2 = False
+NO_MOBILITY = False
+POISSON = False
 
-GRANULARITY    = 'High'
-INITIALIZATION = True
+GRANULARITY = 'Medium'
+INITIALIZATION = False
 
 if MPM:
     METHOD_COLOR = COLOR_MPM
 elif MPM2:
     METHOD_COLOR = COLOR_MPM2
+elif NO_MOBILITY:
+    METHOD_COLOR = _rocket[2]
+elif POISSON:
+    METHOD_COLOR = _rocket[3]
 else:
     METHOD_COLOR = COLOR_ABM
 
-METHOD_TAG = f'MPM_init_{INITIALIZATION}' if MPM else f'ABM_init_{INITIALIZATION}'
-
 N_SEEDS = 10
-N_RUNS  = 100
+N_RUNS = 10
+INIT_VAL = 4
+
+if INIT_VAL == 4:
+    TRUE_BETA = 0.5
+else:
+    TRUE_BETA = 0.25
 
 START_DATE = '01-01-2021'
-END_DATE   = '11-04-2021'
+END_DATE = '11-04-2021'
 
-INIT_DAYS = 14   # drop first 14 days (warmup)
-END_DAYS  = 7    # drop last 7 days (lookahead window too short)
+INIT_DAYS = 14  # drop first 14 days (warmup)
+END_DAYS = 7  # drop last 7 days (lookahead window too short)
 
-FIG_DIR  = '.'
-DATA_DIR = 'Output/PlotData'
+FIG_DIR = '../Output/Plots'
+DATA_DIR = '../Output/PlotData'
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(FIG_DIR, exist_ok=True)
+
+if MPM:
+    METHOD_TAG = f'MPM_init_{INITIALIZATION}_{INIT_VAL}'
+elif NO_MOBILITY:
+    METHOD_TAG = f'no_mob_init_{INITIALIZATION}_{INIT_VAL}'
+elif POISSON:
+    METHOD_TAG = f'Poisson_init_{INITIALIZATION}_{INIT_VAL}'
+else:
+    METHOD_TAG = f'ABM_init_{INITIALIZATION}_{INIT_VAL}'
 
 
 # ------------------------------------------------------------
 # load all realizations into (n_seeds, n_runs, n_days) arrays
 # ------------------------------------------------------------
 def _ci_path(seed, run):
-    if MPM:    suffix = f'_MPM_init_{INITIALIZATION}'
-    elif MPM2: suffix = f'_MPM2_init_{INITIALIZATION}'
-    else:      suffix = f'_init_{INITIALIZATION}'
-    return (f'ABM_data/{GRANULARITY}/transmission_rates/'
+    if MPM:
+        suffix = f'_MPM_init_{INITIALIZATION}'
+    elif MPM2:
+        suffix = f'_MPM2_init_{INITIALIZATION}'
+    elif NO_MOBILITY:
+        suffix = f'_no_mob_init_{INITIALIZATION}'
+    elif POISSON:
+        suffix = f'_Poisson_init_{INITIALIZATION}'
+    else:
+        suffix = f'_init_{INITIALIZATION}'
+    return (f'../ABM_data/{GRANULARITY}/transmission_rates/Initialization{INIT_VAL}/'
             f'CI_{START_DATE}-{END_DATE}_seed_{seed}_perday{run}{suffix}.csv')
 
 
@@ -80,6 +104,7 @@ def _load_all():
     for s in range(N_SEEDS):
         for r in range(N_RUNS):
             p = _ci_path(s, r)
+
             if os.path.exists(p):
                 n_days = len(pd.read_csv(p, index_col=0))
                 break
@@ -99,12 +124,14 @@ def _load_all():
         for r in range(N_RUNS):
             p = _ci_path(s, r)
             if not os.path.exists(p):
-                n_missing += 1; continue
+                n_missing += 1
+                continue
 
             df = pd.read_csv(p, index_col=0)
             if len(df) != n_days:
-                warnings.warn(f"{p}: expected {n_days} rows, got {len(df)}; skipping.")
-                n_missing += 1; continue
+                warnings.warn(f"{p}: expected {n_days} rows, got {len(df)} skipping.")
+                n_missing += 1
+                continue
 
             if 'disp' not in df.columns and 'dispersion' in df.columns:
                 df = df.rename(columns={'dispersion': 'disp'})
@@ -128,6 +155,7 @@ def _load_all():
 
 
 arrs, n_days, n_with_ci, n_loaded_total = _load_all()
+
 t_full = np.arange(n_days)
 
 SHOW_BOOTSTRAP_BAND = n_with_ci >= 1
@@ -186,7 +214,7 @@ fig, ax = plt.subplots(figsize=(10, 5))
 _pooled_panel(ax, t_crop, _crop(beta_med), _crop(beta_q025), _crop(beta_q975),
               ylabel=r'$\beta$', hline=TRUE_BETA)
 ax.set_xlim(lo, hi - 1)
-ax.set_ylim(-0.1, 1)
+ax.set_ylim(TRUE_BETA - 0.2, TRUE_BETA + 0.2)
 ax.set_xlabel('day')
 fig.tight_layout()
 fig.savefig(os.path.join(FIG_DIR, f'Estimated_beta_all_runs_{GRANULARITY}_{METHOD_TAG}.png'), dpi=150)
@@ -200,8 +228,8 @@ ax.set_xlim(lo, hi - 1)
 ax.set_xlabel('day')
 fig.tight_layout()
 fig.savefig(os.path.join(FIG_DIR, f'Estimated_dispersion_all_runs_{GRANULARITY}_{METHOD_TAG}.png'), dpi=150)
-plt.show()
-
+# plt.show()
+plt.close(fig)
 
 # by-seed plots — useful for spotting per-mobility-seed bias
 def _by_seed_panel(ax, t, by_seed_arr, ylabel, hline=None, log_y=False):
@@ -220,11 +248,13 @@ def _by_seed_panel(ax, t, by_seed_arr, ylabel, hline=None, log_y=False):
 fig, ax = plt.subplots(figsize=(10, 5))
 _by_seed_panel(ax, t_crop, beta_by_seed[:, lo:hi], ylabel=r'$\beta$', hline=TRUE_BETA)
 ax.set_xlim(lo, hi - 1)
-ax.set_ylim(-0.1, 1)
+# ax.set_ylim(-0.1, 1)
+ax.set_ylim(TRUE_BETA - 0.2, TRUE_BETA + 0.2)
+
 ax.set_xlabel('day')
 fig.tight_layout()
 fig.savefig(os.path.join(FIG_DIR, f'Estimated_beta_by_seed_{GRANULARITY}_{METHOD_TAG}.png'), dpi=150)
-plt.show()
+# plt.show()
 
 fig, ax = plt.subplots(figsize=(10, 5))
 _by_seed_panel(ax, t_crop, disp_by_seed[:, lo:hi], ylabel=r'$k$', log_y=True)
@@ -232,8 +262,8 @@ ax.set_xlim(lo, hi - 1)
 ax.set_xlabel('day')
 fig.tight_layout()
 fig.savefig(os.path.join(FIG_DIR, f'Estimated_dispersion_by_seed_{GRANULARITY}_{METHOD_TAG}.png'), dpi=150)
-plt.show()
-
+# plt.show()
+plt.close(fig)
 
 # ------------------------------------------------------------
 # CSVs to reproduce figures

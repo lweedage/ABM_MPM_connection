@@ -5,7 +5,7 @@ Reads TomTom OD CSVs, builds per-day mobility matrices (saved as pickles),
 then samples positions for each individual on each day.
 
 When use_same_mobility=True, a single date's matrix is reused for every
-day
+day.
 """
 import configparser
 import datetime
@@ -19,6 +19,9 @@ from datetime import datetime as dt
 from tqdm import tqdm
 
 import warnings
+
+import utils.util
+from utils.util import gemeente_shapes
 
 warnings.filterwarnings("ignore")
 
@@ -67,9 +70,7 @@ class ModelM:
         print('# ---------------------------------------------------------- #')
 
     def read_data(self):
-        print('rawdata', self.Path_RawDataGem)
-        self.DF_Gem = pd.read_csv(self.Path_RawDataGem, delimiter=';', encoding='latin-1')
-
+        self.DF_Gem = pd.read_csv(self.Path_RawDataGem, delimiter=';')
         self.UniLocs = np.unique(self.DF_Gem.Gemeentenaam)
         self.UniIDs = [
             list(self.DF_Gem.Gemeentecode[self.DF_Gem.Gemeentenaam == loc])[0]
@@ -79,14 +80,17 @@ class ModelM:
         self.UniGM = [norm_gm_code(g) for g in self.UniIDs]
         self.GM_to_idx = {gm: i for i, gm in enumerate(self.UniGM)}
 
-        # demographic (home population)
-        DF_Demo = pd.read_csv(self.Path_DemoMat, delimiter=',')
-        DemoIDs = np.array(DF_Demo['Unnamed: 0'])
-        DemoMat_unsorted = np.sum(np.array(DF_Demo[DF_Demo.keys()[1:]]), axis=1)
-        DemoMat_sorted = [
-            DemoMat_unsorted[DemoIDs == int(ID[2:])] for ID in self.UniIDs
-        ]
-        self.DemoMat = (np.array(DemoMat_sorted) / self.Div).astype(int)[:, 0]
+        self.gemeente_shapes = utils.util.make_gemeenteshapes()
+        shapes = self.gemeente_shapes.copy()
+        shapes['GM_norm'] = shapes.index.map(norm_gm_code)
+        pop_map = dict(zip(shapes['GM_norm'], shapes['AANT_INW']))
+
+        self.HomePop_full = np.array([
+            pop_map.get(gm, 0) for gm in self.UniGM
+        ], dtype=float)
+
+        # agent-scale population (one agent per Div people)
+        self.DemoMat = (self.HomePop_full / self.Div).astype(int)
         self.HomePop = self.DemoMat
         self.UniGroups = ['total']
         self.N = np.sum(self.DemoMat)
@@ -94,7 +98,7 @@ class ModelM:
         self.Dates = [self.StartDate + datetime.timedelta(i) for i in range(self.Ndays)]
 
         if self.UseSameMobility:
-            print(f'Loading fixed-date TomTom mobility for '
+            print(f'Loading fixed-date {self.Path_TomTom} mobility for '
                   f'{self.SameMobilityDate.strftime("%d-%m-%Y")} ..')
             self.SameMobMat = self._load_tomtom_day(self.SameMobilityDate)
 
@@ -121,11 +125,27 @@ class ModelM:
         i_idx = df['woon'].map(self.GM_to_idx).to_numpy()
         j_idx = df['bezoek'].map(self.GM_to_idx).to_numpy()
         vals = df['totaal_aantal_bezoekers'].to_numpy(dtype=float)
-
         np.add.at(MobMat, (i_idx, j_idx), vals)
 
-        MobMat = (MobMat / self.Div).astype(int).astype(float)
-        MobMat = MobMat * 10
+        # 1. Build the TomTom-implied diagonal at full population scale
+        trips_out_per_muni = MobMat.sum(axis=1)
+        diag = np.maximum(self.HomePop_full - trips_out_per_muni, 0.0)
+        np.fill_diagonal(MobMat, diag)
+
+        # 2. Rescale to agent counts
+        MobMat = MobMat / self.Div
+
+        # 3. Correct row sums to HomePop (small flooring drift)
+        row_sums = MobMat.sum(axis=1)
+        diff = self.HomePop - np.floor(row_sums).astype(int)
+        MobMat = np.floor(MobMat).astype(int)  # cast everything to int first
+        for i in range(len(diff)):
+            MobMat[i, i] += diff[i]
+
+        # 4. NOW optionally rescale the diagonal to a target stay-home fraction
+        if self.SaveName == 'Medium100' or self.SaveName == 'High30':
+            MobMat = self.rescale_diagonal(MobMat)
+
         return MobMat
 
     def mobility_matrix(self, day):
@@ -139,6 +159,38 @@ class ModelM:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         pickle.dump(MobMat, open(out_path, 'wb'))
         self.MobMat = MobMat
+
+    def rescale_diagonal(self, MobMat, target_stay_home = 0.25):
+        M = MobMat.copy().astype(float)
+        n = M.shape[0]
+        out = np.zeros_like(M, dtype=int)
+        for i in range(n):
+            row_sum = M[i].sum()
+            if row_sum <= 0:
+                continue
+            target_diag = target_stay_home * row_sum
+            current_diag = M[i, i]
+            off_sum = row_sum - current_diag
+            new_off_sum = row_sum - target_diag
+            if off_sum > 0:
+                scale = new_off_sum / off_sum
+                new_row = M[i] * scale
+                new_row[i] = target_diag
+            else:
+                new_row = M[i].copy()
+                new_row[i] = target_diag
+
+            # round off-diagonals (stochastic rounding preserves expectation)
+            off_mask = np.ones(n, dtype=bool)
+            off_mask[i] = False
+            off_vals = new_row[off_mask]
+            floored = np.floor(off_vals).astype(int)
+            frac = off_vals - floored
+            bumps = (np.random.random(len(frac)) < frac).astype(int)
+            out[i, off_mask] = floored + bumps
+            # diagonal absorbs whatever is left so row sum = HomePop[i]
+            out[i, i] = int(self.HomePop[i]) - out[i, off_mask].sum()
+        return out
 
     # ----- People & positions -----
 
@@ -179,7 +231,8 @@ class ModelM:
             self.save_positions(pos, N, seed)
 
     def _build_row_plans(self, MobMat):
-        """For each home municipality h, compute integer #movers per destination."""
+        """For each home municipality h, allocate h's residents across destinations.
+        """
         plans = []
         for h in range(len(self.UniLocs)):
             people_h = self._people_by_home[h]
@@ -188,26 +241,28 @@ class ModelM:
                 plans.append(None)
                 continue
 
-            row = MobMat[h]
+            row = np.asarray(MobMat[h], dtype=float)
             row_sum = row.sum()
             if row_sum <= 0:
                 plans.append(None)
                 continue
 
+            # Rescale to agent counts. =
             counts = (row / row_sum) * n_people
-            counts[h] = 0
-            counts = counts.astype(int)
+            counts = np.floor(counts).astype(int)
 
-            # don't try to send more people than we have
+            # Don't try to place more people than we have.
             total = counts.sum()
             if total > n_people:
+                # Trim the largest-count destinations first.
                 excess = total - n_people
                 for k in np.argsort(-counts):
                     if excess <= 0:
                         break
-                    take = min(counts[k], excess)
+                    take = min(int(counts[k]), excess)
                     counts[k] -= take
                     excess -= take
+
             plans.append(counts)
         return plans
 
@@ -228,7 +283,7 @@ class ModelM:
                     continue
                 pos[shuffled[cursor:cursor + n]] = away
                 cursor += n
-            # remaining stay home
+            # any leftover slack stays home
             pos[shuffled[cursor:]] = h
         return pos
 

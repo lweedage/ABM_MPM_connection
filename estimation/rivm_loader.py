@@ -19,11 +19,11 @@ INFECTION_STATE = 2
 
 
 class RivmLoader:
-    def __init__(self, scenario, start_date, seed=0, run=0):
+    def __init__(self, scenario, start_date, seed=0, run=0, init_val = 4):
         self.scenario = scenario
         self.folder = f'../Output/Data/{scenario}/Seed_{seed}'
 
-        initialization = 4
+        initialization = init_val
 
         status_raw = scipy.sparse.load_npz(
             f'{self.folder}/Initialization{initialization}/01012021-11042021/Status_{run}.npz'

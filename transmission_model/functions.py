@@ -124,9 +124,10 @@ def determine_exposed(self, Stat):
             for p in people:
                 Lvec[p] = force_of_infection2(self, p, fracs2, m) * beta
 
-    self.Lvecs.append(Lvec)
-
-    En = np.where(np.random.random(self.N) < Lvec)[0]
+    if self.Initialization == 6:
+        En = np.where(np.random.random(self.N) < 1 - np.exp(-Lvec))[0]
+    else:
+        En = np.where(np.random.random(self.N) < Lvec)[0]
     del Svec, Ivec, Lvec, Ipos, Is
     return En
 

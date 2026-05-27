@@ -47,7 +47,7 @@ def _norm_gm_code(x) -> str:
 
 def make_gemeenteshapes():
     """Load 2021 municipality shapefile, indexed by GM_CODE."""
-    shapefile_path = "data/shapefiles/gemeenten_2021_v3.shp"
+    shapefile_path = "../data/shapefiles/gemeenten_2021_v3.shp"
     if not os.path.exists(shapefile_path):
         raise FileNotFoundError(f"Shapefile not found at {shapefile_path}")
 
@@ -132,22 +132,6 @@ if "AANT_INW" not in gemeente_shapes.columns:
 inhabitants = gemeente_shapes["AANT_INW"].astype(float)
 
 # GM code -> name lookup
-_gdf = gpd.read_file("data/shapefiles/gemeenten_2021_v3.shp")
+_gdf = gpd.read_file("../data/shapefiles/gemeenten_2021_v3.shp")
 GM_to_name = dict(zip(_gdf["GM_CODE"].astype(str), _gdf["GM_NAAM"].astype(str)))
 municipality_names = [GM_to_name.get(code, code) for code in municipalities_index]
-
-
-def find_label(mob):
-    if mob == 'Google':
-        return 'Google/CBS'
-    if mob == 'gravity_jobs':
-        return 'gravity-ext'
-    if mob == 'Mix':
-        return 'ground-truth'
-    return mob
-
-
-compartments = [
-    'susceptible', 'exposed', 'infected_tested', 'infected_nottested',
-    'removed_tested', 'removed_nottested',
-]

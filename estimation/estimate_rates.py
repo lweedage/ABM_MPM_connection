@@ -25,14 +25,16 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=RuntimeWarning)
 
 MAX_ITER = int(1e5)
-BOOTSTRAP_MAXITER = 100  # bootstrap samples
+BOOTSTRAP_MAXITER = 100  # bootstrap samples warm-start from point est, so few iters needed
 
 
 @lru_cache(maxsize=None)
-def _load_mob(scenario, date_str):
+def _load_mob(scenario, date_str, NO_MOBILITY):
     with open(f'../data/Mobility/MobMats/{scenario}{date_str}.p', 'rb') as f:
         mob = pickle.load(f)
     row_sums = mob.sum(axis=1, keepdims=True)
+    if NO_MOBILITY:
+        return np.eye(mob.shape[0])
     return mob / np.maximum(row_sums, 1e-10)
 
 
@@ -57,7 +59,7 @@ def z_vec_ABM(mob, S_live, I_live, N_live):
 
 
 def z_vec_MPM(mob, S_live, I_live, N_live):
-    """Classical MPM.
+    """Classical residence-time MPM.
 
     Resident of i spends mob[i,j] of their time in j and is exposed
     to prevalence I_j/N_j there.
@@ -167,10 +169,11 @@ def _run_bootstrap(Delta_S, z_vec, logz_vec, beta_hat, r_hat,
 def _run_estimation(start_date, z_builder, confidence=False,
                     conf_level=.95, nr_bootstrap_samples=100,
                     scenario='low', seed=0, run=0,
-                    initialization=True, plot=True, n_jobs=-1):
-    """Common per-day estimation loop. Only z_builder differs across variants."""
+                    initialization=True, plot=True, n_jobs=-1, init_val=4, NO_MOBILITY=False):
+    """Common per-day estimation loop. Only z_builder differs across variants.
+    """
     start_date_dt = dt.datetime.strptime(start_date, '%d-%m-%Y')
-    rivm = rivm_loader.RivmLoader(scenario, start_date_dt, seed, run)
+    rivm = rivm_loader.RivmLoader(scenario, start_date_dt, seed, run, init_val)
 
     CoronaConstants.population_nl = float(rivm.N_arr[0, :].sum())
 
@@ -200,11 +203,9 @@ def _run_estimation(start_date, z_builder, confidence=False,
     for d in range(rivm.T - 1):
         current_date_dt = start_date_dt + dt.timedelta(days=d)
         Delta_S = Delta_S_full[d, :]
-        mob = _load_mob(scenario, current_date_dt.strftime('%d%m%Y'))
-
+        mob = _load_mob(scenario, current_date_dt.strftime('%d%m%Y'), NO_MOBILITY)
         S_live = S_series[d, :]
         I_live = I_series[d, :]
-
         z_vec = z_builder(mob, S_live, I_live, N_per_muni)
         logz_vec = np.log(np.maximum(z_vec, 1e-300))
 
@@ -223,7 +224,6 @@ def _run_estimation(start_date, z_builder, confidence=False,
         point_rows.append({
             'date': current_date_dt, 'beta': beta_hat, 'dispersion': r_hat,
         })
-        initial_guess = [beta_hat, r_hat]
 
         if confidence:
             samples = _run_bootstrap(
@@ -259,38 +259,123 @@ def _run_estimation(start_date, z_builder, confidence=False,
     return Transmission_rate_df, Transmission_rate_CI
 
 
-# Functions to run
+def _run_estimation_poisson(start_date, z_builder, scenario='low', seed=0, run=0,
+                            initialization=True, init_val=4):
+    """Poisson estimation (exact)
+    """
+    start_date_dt = dt.datetime.strptime(start_date, '%d-%m-%Y')
+    rivm = rivm_loader.RivmLoader(scenario, start_date_dt, seed, run, init_val)
+
+    CoronaConstants.population_nl = float(rivm.N_arr[0, :].sum())
+
+    S_hat_arr = rivm.S_hat_arr
+    I_hat_arr = rivm.I_hat_arr
+    S_true_arr = rivm.S_true_arr.astype(np.float64)
+    I_true_arr = rivm.I_true_arr.astype(np.float64)
+    N_per_muni = rivm.N_arr[0, :].astype(np.float64)
+
+    if initialization:
+        S_series, I_series = S_hat_arr, I_hat_arr
+    else:
+        S_series, I_series = S_true_arr, I_true_arr
+
+    Delta_S_full = np.maximum(0.0, S_series[:-1, :] - S_series[1:, :])
+    Delta_S_true_full = np.maximum(0.0, S_true_arr[:-1, :] - S_true_arr[1:, :])
+
+    # for the diagnostic plot
+    S_delta = Delta_S_full.sum(axis=1)
+    S_delta_true = Delta_S_true_full.sum(axis=1)
+
+    point_rows = []
+
+    for d in range(rivm.T - 1):
+        current_date_dt = start_date_dt + dt.timedelta(days=d)
+        Delta_S = Delta_S_full[d, :]
+        mob = _load_mob(scenario, current_date_dt.strftime('%d%m%Y'), NO_MOBILITY=False)
+        S_live = S_series[d, :]
+        I_live = I_series[d, :]
+
+        z_vec = z_builder(mob, S_live, I_live, N_per_muni)
+
+        beta_hat = np.sum(Delta_S) / np.sum(z_vec)
+        r_hat = 0
+
+        point_rows.append({
+            'date': current_date_dt, 'beta': beta_hat, 'dispersion': r_hat,
+        })
+
+    Transmission_rate_df = pd.DataFrame(point_rows)
+    Transmission_rate_CI = Transmission_rate_df.copy()
+
+    return Transmission_rate_df, Transmission_rate_CI
+
+
+# ---------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------
+
 def estimate_rates_per_day(start_date, confidence=False, conf_level=.95,
                            nr_bootstrap_samples=100, scenario='low',
                            seed=0, run=0, initialization=True,
-                           plot=False, n_jobs=-1):
+                           plot=False, n_jobs=-1, init_val=4):
     """ABM mean-field NB regression."""
     return _run_estimation(
         start_date, z_vec_ABM, confidence, conf_level,
         nr_bootstrap_samples, scenario, seed, run,
-        initialization, plot, n_jobs,
+        initialization, plot, n_jobs, init_val
     )
 
 
 def estimate_rates_per_day_MPM(start_date, confidence=False, conf_level=.95,
                                nr_bootstrap_samples=100, scenario='low',
                                seed=0, run=0, initialization=True,
-                               plot=False, n_jobs=-1):
+                               plot=False, n_jobs=-1, init_val=4):
     """Classical residence-time MPM."""
     return _run_estimation(
         start_date, z_vec_MPM, confidence, conf_level,
         nr_bootstrap_samples, scenario, seed, run,
-        initialization, plot, n_jobs,
+        initialization, plot, n_jobs, init_val
     )
 
 
 def estimate_rates_per_day_MPM2(start_date, confidence=False, conf_level=.95,
                                 nr_bootstrap_samples=100, scenario='low',
                                 seed=0, run=0, initialization=True,
-                                plot=False, n_jobs=1):
+                                plot=False, n_jobs=1, init_val=4):
     """One-beta MPM with three pathways (hh, ah, ha)."""
     return _run_estimation(
         start_date, z_vec_MPM_2, confidence, conf_level,
         nr_bootstrap_samples, scenario, seed, run,
-        initialization, plot, n_jobs,
+        initialization, plot, n_jobs, init_val
+    )
+
+
+def estimate_rates_per_day_no_mob(start_date, confidence=False, conf_level=.95,
+                                  nr_bootstrap_samples=100, scenario='low',
+                                  seed=0, run=0, initialization=True,
+                                  plot=False, n_jobs=1, init_val=4):
+    return _run_estimation(
+        start_date, z_vec_MPM, confidence, conf_level,
+        nr_bootstrap_samples, scenario, seed, run,
+        initialization, plot, n_jobs, init_val, NO_MOBILITY=True
+    )
+
+
+def estimate_rates_poisson(start_date, confidence=False, conf_level=.95,
+                           nr_bootstrap_samples=100, scenario='low',
+                           seed=0, run=0, initialization=True,
+                           plot=False, n_jobs=1, init_val=4):
+    return _run_estimation_poisson(
+        start_date, z_vec_ABM, scenario, seed, run,
+        initialization, init_val
+    )
+
+
+def estimate_rates_poisson_MPM(start_date, confidence=False, conf_level=.95,
+                               nr_bootstrap_samples=100, scenario='low',
+                               seed=0, run=0, initialization=True,
+                               plot=False, n_jobs=1, init_val=4):
+    return _run_estimation_poisson(
+        start_date, z_vec_MPM, scenario, seed, run,
+        initialization, init_val
     )
