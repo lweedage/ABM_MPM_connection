@@ -42,16 +42,16 @@ Estimation code comes from https://github.com/MartijnGosgens/CovidMobilityTradeO
 
 ## Running the pipeline
 
-# Stage 1: build mobility matrices and position people
+### Stage 1: build mobility matrices and position people
 mobility_model.run_model
 
-# Stage 2: run the ABM transmission model (10 mobility seeds × 100 runs by default)
+### Stage 2: run the ABM transmission model (10 mobility seeds × 100 runs by default)
 transmission_model.run_model
 
-# Stage 3: estimate β per day for every (seed, run)
+### Stage 3: estimate β per day for every (seed, run)
 estimation.run_estimation
 
-# Stage 4: plots
+### Stage 4: plots
 plotting.plot_trajectories
 plotting.plot_transmission_rates
 
