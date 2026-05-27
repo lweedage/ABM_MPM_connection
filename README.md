@@ -4,7 +4,7 @@ Code for estimating per-day transmission rates (β) from agent-based
 model (ABM) output, comparing three estimator variants against a
 known-true β from a stochastic ABM ground truth. Built on Dutch
 municipality-level mobility data (TomTom) for the period
-01-01-2021 to 11-04-2021.
+01-01-2021 to 11-04-2021 (100 days).
 
 ## What this code does
 
@@ -66,14 +66,30 @@ resolution to `'Low'` or `'Verylow'` in the transmission model.
 
 ## Project layout
 
+## Project layout
+ 
 ```
 ├── mobility_model/      stage 1: build per-day mobility matrices, position agents
+│   ├── model.py            ModelM — TomTom OD -> daily mobility matrices + agent positions
+│   ├── run_model.py        
 ├── transmission_model/  stage 2: ABM SEIR simulation
-├── estimation/          stage 3: NB regression to estimate β
-├── mobility/            mobility data utilities (loading, networks, preprocessing)
-├── seir/                aggregate SEIR helper used by some plots
-├── plotting/            stage 4: trajectories, β estimates, maps
-└── utils/               constants, shapefiles, mobility loading helpers
+│   ├── model.py            ModelT — agent-based SEIR on the municipality network
+│   └── run_model.py        
+├── estimation/          stage 3: NB regression to estimate beta
+│   ├── estimate_rates.py   the Poisson estimators (ABM / MPM / no-mobility)
+│   ├── rivm_loader.py      ABM Status -> per-day (S,E,I,R) + reconstructed S_hat/E_hat/I_hat
+│   ├── pathways.py         decompose the ABM force of infection into its four pathways
+│   ├── run_estimation.py   estimate beta for every (seed, run)
+│   └── compare_estimators.py  pool per-(seed,run) estimates into one CSV
+├── plotting/            stage 4: trajectories, beta estimates, maps
+│   ├── plot_trajectories.py                ABM vs compartmental, entropy, daily maps
+│   ├── plot_trajectories_estimated_beta.py same, driven by the *estimated* beta(t)
+│   ├── plot_transmission_rates.py          pooled + per-seed beta estimates
+│   ├── compare_trajectories.py             extra trajectory comparison
+│   └── plot_differences.py                 maps of the D_j(t) visitor-share term
+├── seir/                aggregate SEIR helper (MobilitySEIR) used by some plots
+├── utils/               constants, shapefiles, mobility-loading helpers
+└── make_figures.py      draws the 2x2 estimator-comparison figure from the pooled CSV
 
 data/                    expected layout described in data/README.md (gitignored)
 Output/                  pipeline writes outputs here (gitignored)
@@ -86,14 +102,17 @@ Output/                  pipeline writes outputs here (gitignored)
   one agent = 100 people; at `'Verylow'` one agent = 5000 people (manual entry).
 
 - `Initialization=4` (5 seed infections in Amsterdam) is the default
-  for the experiments. Other values (1: MPM-initialized compartments;
+  for the experiments, with beta = 0.5 `Initialization=5' runs similarly but with beta = 0.25. Other values (1: MPM-initialized compartments;
   2: Tilburg seed; 3: one infection per municipality) are kept for from the original ABM.
 
 - The estimator drops the first 14 days (warm-up) and last 7 days
   (look-ahead window too short for E_hat) by default — see
   `INIT_DAYS` / `END_DAYS` in `plot_transmission_rates.py`.
 
-- `mobility_seir.py` in `seir/` is currently used only by a
-  comparison plot that isn't in the main pipeline.
-
 - TomTom data is not publicly available.
+
+- **Shaded bands.** In the estimator-comparison and trajectory figures
+  the shaded band is the 2.5%–97.5% spread of the per-realization
+  estimates across simulation runs (run-to-run variability), **not** a
+  confidence interval.
+
